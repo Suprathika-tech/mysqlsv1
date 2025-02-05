@@ -3,9 +3,9 @@
   hosts: my_servers
   become: yes  # If needed to use sudo privileges
   vars:
-    mysql_user: "{{ mysql_user }}"
-    mysql_password: "{{ mysql_password }}"  # Use an Ansible variable for security
-    mysql_host: "{{ mysql_host }}"  # Optional: define MySQL host if needed
+    mysql_user: "{{ mysqlAutomation }}"
+    mysql_password: "{{ mysqlAutomation }}"  # Use an Ansible variable for security
+    mysql_host: "{{ 127.0.0.1 }}"  # Optional: define MySQL host if needed
  
   tasks:
  
