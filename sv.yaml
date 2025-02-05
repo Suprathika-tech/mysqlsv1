@@ -1,25 +1,57 @@
----
-- name: Check MySQL Database Space
-  hosts: my_servers
-  become: yes  # If needed to use sudo privileges
-  vars:
-    mysql_user: "{{mysql_user}}"
-    mysql_password: "{{ mysql_password }}"  # Use an Ansible variable for security
- 
+- name: MySQL Database Monitoring
+  hosts: mysql_servers
+  become: yes
+  gather_facts: no
+
   tasks:
-    - name: Ensure MySQL client is installed
-      package:
-        name: mysql-client
-        state: present
- 
-    - name: Get database space usage via MySQL command
-      command: >
-        mysql -u{{ mysql_user }} -p{{ mysql_password }} -e "SELECT table_schema AS 'Database',
-                        SUM(data_length + index_length) / 1024 / 1024 AS 'Size (MB)' 
-                 FROM MYSQLSV.tables 
-                 GROUP BY table_schema;"
-      register: db_space_output
- 
-    - name: Show database sizes
+    # 1️⃣ Check Database Utilization (Active Connections)
+    - name: Check Active Connections
+      community.mysql.mysql_query:
+        login_host: "localhost"
+        login_user: "root"
+        login_password: "your_password"
+        query: "SHOW STATUS LIKE 'Threads_connected';"
+      register: db_connections
+
+    - name: Show Active Connections
       debug:
-        msg: "{{ db_space_output.stdout_lines }}"
+        var: db_connections
+
+    # 2️⃣ Check Health of Database (Key Performance Metrics)
+    - name: Get Database Health Metrics
+      community.mysql.mysql_query:
+        login_host: "localhost"
+        login_user: "root"
+        login_password: "your_password"
+        query: "SHOW GLOBAL STATUS WHERE Variable_name IN ('Connections', 'Threads_running', 'Uptime', 'Slow_queries', 'Open_tables');"
+      register: db_health
+
+    - name: Show Database Health Metrics
+      debug:
+        var: db_health
+
+    # 3️⃣ Check for Deadlocks
+    - name: Check for Deadlocks
+      community.mysql.mysql_query:
+        login_host: "localhost"
+        login_user: "root"
+        login_password: "your_password"
+        query: "SHOW ENGINE INNODB STATUS;"
+      register: deadlocks
+
+    - name: Show Deadlock Information
+      debug:
+        var: deadlocks
+
+    # 4️⃣ Check for Job Activities (Scheduled Events)
+    - name: Check Scheduled MySQL Events
+      community.mysql.mysql_query:
+        login_host: "localhost"
+        login_user: "root"
+        login_password: "your_password"
+        query: "SHOW EVENTS;"
+      register: job_activities
+
+    - name: Display Job Activities
+      debug:
+        var: job_activities
