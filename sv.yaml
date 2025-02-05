@@ -1,57 +1,59 @@
-- name: MySQL Database Monitoring
-  hosts: mysql_servers
-  become: yes
-  gather_facts: no
-
+---
+- name: Check MySQL Database Space and Health
+  hosts: my_servers
+  become: yes  # If needed to use sudo privileges
+  vars:
+    mysql_user: "{{ mysql_user }}"
+    mysql_password: "{{ mysql_password }}"  # Use an Ansible variable for security
+    mysql_host: "{{ mysql_host }}"  # Optional: define MySQL host if needed
+ 
   tasks:
-    # 1️⃣ Check Database Utilization (Active Connections)
-    - name: Check Active Connections
-      community.mysql.mysql_query:
-        login_host: "localhost"
-        login_user: "root"
-        login_password: "your_password"
-        query: "SHOW STATUS LIKE 'Threads_connected';"
-      register: db_connections
-
-    - name: Show Active Connections
+ 
+    # Ensure MySQL client is installed
+    - name: Ensure MySQL client is installed
+      package:
+        name: mysql-client
+        state: present
+ 
+    # Get database space usage via MySQL command
+    - name: Get database space usage via MySQL command
+      command: >
+        mysql -u{{ mysql_user }} -p{{ mysql_password }} -h{{ mysql_host }} -e "SELECT table_schema AS 'Database',
+                        SUM(data_length + index_length) / 1024 / 1024 AS 'Size (MB)' 
+                 FROM MYSQLSV.tables GROUP BY table_schema;"
+      register: db_space_output
+ 
+    # Show database sizes
+    - name: Show database sizes
       debug:
-        var: db_connections
-
-    # 2️⃣ Check Health of Database (Key Performance Metrics)
-    - name: Get Database Health Metrics
-      community.mysql.mysql_query:
-        login_host: "localhost"
-        login_user: "root"
-        login_password: "your_password"
-        query: "SHOW GLOBAL STATUS WHERE Variable_name IN ('Connections', 'Threads_running', 'Uptime', 'Slow_queries', 'Open_tables');"
-      register: db_health
-
-    - name: Show Database Health Metrics
+        msg: "{{ db_space_output.stdout_lines }}"
+ 
+    # Check MySQL server health (uptime and active threads)
+    - name: Check MySQL server health
+      command: mysql -u{{ mysql_user }} -p{{ mysql_password }} -h{{ mysql_host }} -e "SHOW GLOBAL STATUS LIKE 'Threads_connected';"
+      register: db_health_status
+      changed_when: false
+ 
+    - name: Show MySQL server health status
       debug:
-        var: db_health
-
-    # 3️⃣ Check for Deadlocks
-    - name: Check for Deadlocks
-      community.mysql.mysql_query:
-        login_host: "localhost"
-        login_user: "root"
-        login_password: "your_password"
-        query: "SHOW ENGINE INNODB STATUS;"
-      register: deadlocks
-
-    - name: Show Deadlock Information
+        msg: "MySQL Health Status: {{ db_health_status.stdout_lines }}"
+ 
+    # Check for deadlocks in the InnoDB engine
+    - name: Check for deadlocks in MySQL InnoDB engine
+      command: mysql -u{{ mysql_user }} -p{{ mysql_password }} -h{{ mysql_host }} -e "SHOW ENGINE INNODB STATUS\G"
+      register: innodb_status
+      changed_when: false
+ 
+    - name: Show InnoDB status for deadlocks
       debug:
-        var: deadlocks
-
-    # 4️⃣ Check for Job Activities (Scheduled Events)
-    - name: Check Scheduled MySQL Events
-      community.mysql.mysql_query:
-        login_host: "localhost"
-        login_user: "root"
-        login_password: "your_password"
-        query: "SHOW EVENTS;"
-      register: job_activities
-
-    - name: Display Job Activities
+        msg: "InnoDB Status (Deadlocks): {{ innodb_status.stdout_lines }}"
+ 
+    # Check for any running jobs or scheduled events
+    - name: Check for running MySQL jobs/events
+      command: mysql -u{{ mysql_user }} -p{{ mysql_password }} -h{{ mysql_host }} -e "SHOW PROCESSLIST;"
+      register: job_activity
+      changed_when: false
+ 
+    - name: Show running job activities in MySQL
       debug:
-        var: job_activities
+        msg: "Current MySQL job activities: {{ job_activity.stdout_lines }}"
