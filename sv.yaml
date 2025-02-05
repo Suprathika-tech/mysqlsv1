@@ -8,7 +8,7 @@
     mysql_database: "MYSQLSV"
     mysql_port: 3306
   tasks:
-    - name: Check MySQL Connection
+- name: Check MySQL Connection
       community.mysql.mysql_query:
         login_host: "{{ mysql_host }}"
         login_user: "{{ mysql_user }}"
@@ -17,11 +17,11 @@
         query: "SELECT VERSION();"
       register: mysql_version
 
-    - name: Show MySQL Version
+- name: Show MySQL Version
       debug:
         msg: "Connected to MySQL Server - Version: {{ mysql_version.query_result[0]['VERSION()'] }}"
 
-    - name: Check Database Space Utilization
+- name: Check Database Space Utilization
       community.mysql.mysql_query:
         login_host: "{{ mysql_host }}"
         login_user: "{{ mysql_user }}"
@@ -34,11 +34,11 @@
           GROUP BY table_schema;
       register: db_space
 
-    - name: Display DB Space Utilization
+- name: Display DB Space Utilization
       debug:
         var: db_space.query_result
 
-    - name: Check MySQL Health (Uptime & Threads)
+- name: Check MySQL Health (Uptime & Threads)
       community.mysql.mysql_query:
         login_host: "{{ mysql_host }}"
         login_user: "{{ mysql_user }}"
@@ -49,11 +49,11 @@
           - "SHOW STATUS LIKE 'Threads_connected';"
       register: db_health
 
-    - name: Display MySQL Health
+- name: Display MySQL Health
       debug:
         msg: "Uptime: {{ db_health.query_result[0][0]['Value'] }} seconds, Threads Connected: {{ db_health.query_result[1][0]['Value'] }}"
 
-    - name: Check for Deadlocks
+- name: Check for Deadlocks
       community.mysql.mysql_query:
         login_host: "{{ mysql_host }}"
         login_user: "{{ mysql_user }}"
@@ -62,11 +62,11 @@
         query: "SHOW ENGINE INNODB STATUS;"
       register: deadlocks
 
-    - name: Display Deadlock Information
+- name: Display Deadlock Information
       debug:
         msg: "{{ deadlocks.query_result if 'LATEST DETECTED DEADLOCK' in deadlocks.query_result | string else 'No deadlocks detected' }}"
 
-    - name: Check Running Queries (Job Activities)
+- name: Check Running Queries (Job Activities)
       community.mysql.mysql_query:
         login_host: "{{ mysql_host }}"
         login_user: "{{ mysql_user }}"
@@ -75,6 +75,6 @@
         query: "SHOW PROCESSLIST;"
       register: job_activities
 
-    - name: Display Running Queries
+- name: Display Running Queries
       debug:
         var: job_activities.query_result
