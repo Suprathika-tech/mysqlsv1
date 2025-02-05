@@ -7,7 +7,6 @@
     mysql_password: "mysqlAutomation"
     mysql_database: "MYSQLSV"
     mysql_port: 3306
-
   tasks:
     - name: Check MySQL Connection
       community.mysql.mysql_query:
