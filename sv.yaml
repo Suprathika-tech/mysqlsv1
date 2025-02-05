@@ -1,83 +1,49 @@
-    - name: MySQL Server Health Check
-      hosts: mysql_servers
-      become: yes
-      gather_facts: no
-    
-      tasks:
-        # 1️⃣ Connect to MySQL Server
-        - name: Check MySQL Connection
-          community.mysql.mysql_query:
-            login_host: "localhost"
-            login_user: "root"
-            login_password: "your_password"
-            query: "SELECT VERSION();"
-          register: mysql_version
-    
-        - name: Display MySQL Version
-          debug:
-            var: mysql_version
-    
-        # 2️⃣ Check Database Space
-        - name: Check Database Space Usage
-          community.mysql.mysql_query:
-            login_host: "localhost"
-            login_user: "root"
-            login_password: "your_password"
-            query: "SELECT table_schema AS DB_Name, ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS DB_Size_MB FROM information_schema.tables GROUP BY table_schema;"
-          register: db_size
-    
-        - name: Display Database Size
-          debug:
-            var: db_size
-    
-        # 3️⃣ Database Utilization
-        - name: Check Active Connections
-          community.mysql.mysql_query:
-            login_host: "localhost"
-            login_user: "root"
-            login_password: "your_password"
-            query: "SHOW STATUS LIKE 'Threads_connected';"
-          register: db_connections
-    
-        - name: Show Active Connections
-          debug:
-            var: db_connections
-    
-        # 4️⃣ Health of the Database
-        - name: Get Database Health Metrics
-          community.mysql.mysql_query:
-            login_host: "localhost"
-            login_user: "root"
-            login_password: "your_password"
-            query: "SHOW GLOBAL STATUS WHERE Variable_name IN ('Connections', 'Threads_running', 'Uptime');"
-          register: db_health
-    
-        - name: Show Database Health Metrics
-          debug:
-            var: db_health
-    
-        # 5️⃣ Check for Deadlocks
-        - name: Check for Deadlocks
-          community.mysql.mysql_query:
-            login_host: "localhost"
-            login_user: "root"
-            login_password: "your_password"
-            query: "SHOW ENGINE INNODB STATUS;"
-          register: deadlocks
-    
-        - name: Show Deadlock Information
-          debug:
-            var: deadlocks
-    
-        #  Check for Job Activities
-        - name: Check Scheduled MySQL Events
-          community.mysql.mysql_query:
-            login_host: "localhost"
-            login_user: "root"
-            login_password: "your_password"
-            query: "SHOW EVENTS;"
-          register: job_activities
-    
-        - name: Display Job Activities
-          debug:
-            var: job_activities
+- name: MySQL Server Health Check
+  hosts: mysql_servers
+  become: yes
+  gather_facts: no
+
+  tasks:
+    # 1️⃣ Connect to MySQL Server
+    - name: Check MySQL Connection
+      community.mysql.mysql_query:
+        login_host: "localhost"
+        login_user: "root"
+        login_password: "your_password"
+        query: "SELECT VERSION();"
+      register: mysql_version
+
+    - name: Display MySQL Version
+      debug:
+        var: mysql_version
+
+    # 2️⃣ Check Database Space
+    - name: Check Database Space Usage
+      community.mysql.mysql_query:
+        login_host: "localhost"
+        login_user: "root"
+        login_password: "your_password"
+        query: "SELECT table_schema AS DB_Name, ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS DB_Size_MB FROM information_schema.tables GROUP BY table_schema;"
+      register: db_size
+
+    - name: Display Database Size
+      debug:
+        var: db_size
+
+    # 3️⃣ Database Utilization
+    - name: Check Active Connections
+      community.mysql.mysql_query:
+        login_host: "localhost"
+        login_user: "root"
+        login_password: "your_password"
+        query: "SHOW STATUS LIKE 'Threads_connected';"
+      register: db_connections
+
+    - name: Show Active Connections
+      debug:
+        var: db_connections
+
+    # 4️⃣ Health of the Database
+    - name: Get Database Health Metrics
+      community.mysql.mysql_query:
+        login_host
