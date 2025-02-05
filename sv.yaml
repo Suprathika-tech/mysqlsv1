@@ -1,18 +1,25 @@
-- name: MySQL Server Health Check
-  hosts: mysql_servers
-  become: yes
-  gather_facts: no
-
+---
+- name: Check MySQL Database Space
+  hosts: my_servers
+  become: yes  # If needed to use sudo privileges
+  vars:
+    mysql_user: "{{mysql_user}}"
+    mysql_password: "{{ mysql_password }}"  # Use an Ansible variable for security
+ 
   tasks:
-    # 1️⃣ Connect to MySQL Server
-    - name: Check MySQL Connection
-      community.mysql.mysql_query:
-        login_host: "localhost"
-        login_user: "root"
-        login_password: "your_password"
-        query: "SELECT VERSION();"
-      register: mysql_version
-
-    - name: Display MySQL Version
+    - name: Ensure MySQL client is installed
+      package:
+        name: mysql-client
+        state: present
+ 
+    - name: Get database space usage via MySQL command
+      command: >
+        mysql -u{{ mysql_user }} -p{{ mysql_password }} -e "SELECT table_schema AS 'Database',
+                        SUM(data_length + index_length) / 1024 / 1024 AS 'Size (MB)' 
+                 FROM MYSQLSV.tables 
+                 GROUP BY table_schema;"
+      register: db_space_output
+ 
+    - name: Show database sizes
       debug:
-        var: mysql_version
+        msg: "{{ db_space_output.stdout_lines }}"
