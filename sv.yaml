@@ -1,49 +1,45 @@
 ---
-- name: Check MySQL Database Space and Health
-  hosts: 10.112.0.11
+- name: Connect to Linux MySQL Server and Perform Health Checks via SSH
+  hosts: all
   become: true
   vars:
-    mysql_user: "{{mysql_user}}"
-    mysql_password: "{{mysql_password}}"
-    mysql_host: "{{mysql_host}}"
+    mysql_user: "mysqlAutomation"
+    mysql_password: "mysqlAutomation"
+    mysql_host: "127.0.0.1"
+    ssh_user: "your_ssh_username"  # Replace with your SSH username
 
   tasks:
 
-    - name: Ensure MySQL client is installed
-      package:
-        name: mysql-client  # For Debian/Ubuntu; use 'mysql' for RHEL/CentOS
-        state: present
-
-    - name: Get database space usage via MySQL command
+    - name: Check DB space utilization via SSH
       shell: |
-        mysql -u"{{ mysql_user }}" -p"{{ mysql_password }}" -h"{{ mysql_host }}" -e \
-        "SELECT table_schema AS 'Database', 
-                ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' 
-         FROM information_schema.tables 
-         GROUP BY table_schema;"
+        ssh {{ ssh_user }}@{{ mysql_host }} "mysql -u'{{ mysql_user }}' -p'{{ mysql_password }}' -e \"
+        SELECT table_schema AS 'Database', 
+               ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' 
+        FROM information_schema.tables 
+        GROUP BY table_schema;\""
       register: db_space_output
-      no_log: true  # Hides sensitive information from logs
+      no_log: true
 
-    - name: Show database sizes
+    - name: Show DB space utilization
       debug:
         msg: "{{ db_space_output.stdout_lines }}"
 
-    - name: Check MySQL server health (Threads Connected)
+    - name: Check health of DB via SSH (Threads Connected)
       shell: |
-        mysql -u"{{ mysql_user }}" -p"{{ mysql_password }}" -h"{{ mysql_host }}" -e \
-        "SHOW GLOBAL STATUS LIKE 'Threads_connected';"
+        ssh {{ ssh_user }}@{{ mysql_host }} "mysql -u'{{ mysql_user }}' -p'{{ mysql_password }}' -e \"
+        SHOW GLOBAL STATUS LIKE 'Threads_connected';\""
       register: db_health_status
       changed_when: false
       no_log: true
 
-    - name: Show MySQL server health status
+    - name: Show DB health status
       debug:
-        msg: "MySQL Health Status: {{ db_health_status.stdout_lines }}"
+        msg: "DB Health Status: {{ db_health_status.stdout_lines }}"
 
-    - name: Check for deadlocks in MySQL InnoDB engine
+    - name: Check for deadlocks in MySQL InnoDB engine via SSH
       shell: |
-        mysql -u"{{ mysql_user }}" -p"{{ mysql_password }}" -h"{{ mysql_host }}" -e \
-        "SHOW ENGINE INNODB STATUS\G"
+        ssh {{ ssh_user }}@{{ mysql_host }} "mysql -u'{{ mysql_user }}' -p'{{ mysql_password }}' -e \"
+        SHOW ENGINE INNODB STATUS\\G\""
       register: innodb_status
       changed_when: false
       no_log: true
@@ -52,10 +48,10 @@
       debug:
         msg: "InnoDB Status (Deadlocks): {{ innodb_status.stdout_lines }}"
 
-    - name: Check for running MySQL jobs/events
+    - name: Check for job activities in MySQL via SSH
       shell: |
-        mysql -u"{{ mysql_user }}" -p"{{ mysql_password }}" -h"{{ mysql_host }}" -e \
-        "SHOW PROCESSLIST;"
+        ssh {{ ssh_user }}@{{ mysql_host }} "mysql -u'{{ mysql_user }}' -p'{{ mysql_password }}' -e \"
+        SHOW PROCESSLIST;\""
       register: job_activity
       changed_when: false
       no_log: true
