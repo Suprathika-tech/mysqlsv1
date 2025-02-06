@@ -3,9 +3,9 @@
   hosts: all
   become: true
   vars:
-    mysql_user: "mysqlAutomation"
-    mysql_password: "mysqlAutomation"
-    mysql_host: "127.0.0.1"
+    mysql_user: "{{mysql_user}}"
+    mysql_password: "{{mysql_password}}"
+    mysql_host: "{{mysql_host}}"
 
   tasks:
 
