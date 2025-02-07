@@ -1,5 +1,5 @@
 - name: Check MySQL Server Health
-  hosts: local host
+  hosts: localhost
   gather_facts: no
   vars:
     ansible_python_interpreter: /usr/bin/python3
