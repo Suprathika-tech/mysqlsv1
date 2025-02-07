@@ -1,40 +1,98 @@
 ---
-- name: Check MySQL Server Health
-  hosts: 127.0.0.1
-  gather_facts: no
+- name: MySQL Health Check Playbook
+  hosts: mysql_servers
+  become: false
   vars:
-    mysql_host: "127.0.0.1"
+    mysql_host: "20.55.88.203"
+    mysql_port: 3306
     mysql_user: "mysqlauto"
     mysql_password: "mysqlAutomation"
+    mysql_db: "information_schema"
+
   tasks:
-    - name: Get Database Space Utilization
-      ansible.builtin.shell: |
-        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SELECT table_schema AS DatabaseName, SUM(data_length + index_length) / 1024 / 1024 AS SizeMB FROM information_schema.tables GROUP BY table_schema;"
-      register: db_space
-      ignore_errors: yes
- 
-    - name: Get Database Health
-      ansible.builtin.shell: |
-        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW DATABASES;"
-      register: db_health
-      ignore_errors: yes
- 
-    - name: Check for Deadlocks
-      ansible.builtin.shell: |
-        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW ENGINE INNODB STATUS\G" | grep -A 20 'LATEST DETECTED DEADLOCK'
-      register: deadlocks
-      ignore_errors: yes
- 
-    - name: Get MySQL Process List
-      ansible.builtin.shell: |
-        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW FULL PROCESSLIST;"
-      register: process_list
-      ignore_errors: yes
- 
-    - name: Display Results
+    - name: Check Database Space Utilization
+      community.mysql.mysql_query:
+        login_host: "{{ mysql_host }}"
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ mysql_password }}"
+        login_db: "{{ mysql_db }}"
+        query: |
+          SELECT table_schema AS DatabaseName,
+                 SUM(data_length + index_length) / 1024 / 1024 AS TotalSizeMB
+          FROM information_schema.tables
+          GROUP BY table_schema;
+      register: db_space_result
+
+    - name: Display Database Space Utilization
       debug:
-        msg:
-          - "Database Space Utilization: {{ db_space.stdout | default('No output') }}"
-          - "Database Health: {{ db_health.stdout | default('No output') }}"
-          - "Deadlocks: {{ deadlocks.stdout | default('No output') }}"
-          - "MySQL Process List: {{ process_list.stdout | default('No output') }}"
+        msg: |
+          📊 Database Space Utilization:
+          {% for row in db_space_result.query_result %}
+          - {{ row.DatabaseName }}: {{ row.TotalSizeMB | round(2) }} MB
+          {% endfor %}
+
+    - name: Check for Deadlocks
+      community.mysql.mysql_query:
+        login_host: "{{ mysql_host }}"
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ mysql_password }}"
+        query: SHOW ENGINE INNODB STATUS;
+      register: deadlock_result
+
+    - name: Display Deadlock Information
+      debug:
+        msg: |
+          🚨 Deadlocks:
+          {% if 'LATEST DETECTED DEADLOCK' in deadlock_result.query_result[0].Status %}
+          - Deadlock detected: {{ deadlock_result.query_result[0].Status }}
+          {% else %}
+          - No deadlocks detected
+          {% endif %}
+
+    - name: Check MySQL Event Scheduler Activities
+      community.mysql.mysql_query:
+        login_host: "{{ mysql_host }}"
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ mysql_password }}"
+        query: |
+          SELECT event_name, status
+          FROM information_schema.events
+          WHERE status = 'ENABLED';
+      register: event_result
+      failed_when: false  # Avoid failure if no events are found
+
+    - name: Display Event Scheduler Activities
+      debug:
+        msg: |
+          🛠 MySQL Event Activities:
+          {% if event_result.query_result %}
+          {% for row in event_result.query_result %}
+          - Event: {{ row.event_name }} | Status: {{ row.status }}
+          {% endfor %}
+          {% else %}
+          - No active events found.
+          {% endif %}
+
+    - name: Check Active Connections (Health Check)
+      community.mysql.mysql_query:
+        login_host: "{{ mysql_host }}"
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ mysql_password }}"
+        query: SHOW STATUS LIKE 'Threads_connected';
+      register: health_result
+
+    - name: Display Database Health Status
+      debug:
+        msg: |
+          🩺 Database Health Check:
+          - Active Connections: {{ health_result.query_result[0].Value }}
+
+    - name: Get MySQL Version via SSH
+      shell: mysql --host={{ mysql_host }} --user={{ mysql_user }} --password={{ mysql_password }} -e 'SELECT VERSION();'
+      register: mysql_version_result
+
+    - name: Display MySQL Version
+      debug:
+        msg: |
+          [ℹ️] MySQL Version (via SSH):
+          {{ mysql_version_result.stdout }}
