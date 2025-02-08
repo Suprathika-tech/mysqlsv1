@@ -1,94 +1,57 @@
 ---
-- name: MySQL Health Check Playbook
-  hosts: localhost
-  become: no
+- name: Check MySQL Server Health
+  hosts: 10.112.0.10
   gather_facts: no
   vars:
-    mysql_user: "mysqlauto"
-    mysql_password: "mysqlAutomation"
-    mysql_cmd: "mysql -u{{ mysql_user }} -p{{ mysql_password }} -N -B"
+    mysql_host: "{{ mysql_host }}"
+    mysql_user: "{{ mysql_user }}"
+    mysql_password: "{{ mysql_password }}"
+
   tasks:
-    - name: Create timestamp
-      ansible.builtin.set_fact:
-        timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H-%M-%S') }}"
- 
-    - name: Get Database Sizes
+    - name: Get Database Space Utilization
       ansible.builtin.shell: |
-        {{ mysql_cmd }} -e "
-        SELECT 
-          table_schema AS 'Database',
-          ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size_MB'
-        FROM information_schema.tables
-        GROUP BY table_schema;"
-      register: db_sizes
+        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SELECT table_schema AS DatabaseName, SUM(data_length + index_length) / 1024 / 1024 AS SizeMB FROM information_schema.tables GROUP BY table_schema;"
+      register: db_space
       ignore_errors: yes
- 
+
+    - name: Debug Database Space Utilization Output
+      debug:
+        var: db_space.stdout
+
+    - name: Get Database Health
+      ansible.builtin.shell: |
+        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW DATABASES;"
+      register: db_health
+      ignore_errors: yes
+
+    - name: Debug Database Health Output
+      debug:
+        var: db_health.stdout
+
     - name: Check for Deadlocks
       ansible.builtin.shell: |
-        {{ mysql_cmd }} -e "SHOW ENGINE INNODB STATUS\G"
-      register: deadlock_status
+        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW ENGINE INNODB STATUS\G" | grep -A 20 'LATEST DETECTED DEADLOCK'
+      register: deadlocks
       ignore_errors: yes
- 
-    - name: Get Running Processes
+
+    - name: Debug Deadlocks Output
+      debug:
+        var: deadlocks.stdout
+
+    - name: Get MySQL Process List
       ansible.builtin.shell: |
-        {{ mysql_cmd }} -e "
-        SELECT 
-          id,
-          user,
-          host,
-          db,
-          command,
-          time,
-          state,
-          info
-        FROM information_schema.processlist
-        WHERE command != 'Sleep';"
+        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW FULL PROCESSLIST;"
       register: process_list
       ignore_errors: yes
- 
-    - name: Check Event Scheduler Status
-      ansible.builtin.shell: |
-        {{ mysql_cmd }} -e "
-        SELECT 
-          event_name,
-          status,
-          last_executed,
-          starts,
-          ends
-        FROM information_schema.events;"
-      register: event_status
-      ignore_errors: yes
- 
-    - name: Create Report Directory
-      ansible.builtin.file:
-        path: "./mysql_reports"
-        state: directory
-        mode: '0755'
- 
-    - name: Generate Health Report
-      ansible.builtin.copy:
-        content: |
-          MySQL Health Report - {{ timestamp }}
-          ================================================
- 
-          Database Space Utilization
-          -------------------------
-          {{ db_sizes.stdout if db_sizes.stdout is defined else 'Query failed' }}
- 
-          Deadlock Information
-          -------------------
-          {{ deadlock_status.stdout if deadlock_status.stdout is defined else 'Query failed' }}
- 
-          Running Processes
-          ----------------
-          {{ process_list.stdout if process_list.stdout is defined else 'Query failed' }}
- 
-          Event Scheduler Status
-          ---------------------
-          {{ event_status.stdout if event_status.stdout is defined else 'Query failed' }}
-        dest: "./mysql_reports/mysql_health_report_{{ timestamp }}.txt"
-        mode: '0644'
- 
-    - name: Display Report Location
+
+    - name: Debug MySQL Process List Output
       debug:
-        msg: "MySQL health report has been generated at ./mysql_reports/mysql_health_report_{{ timestamp }}.txt"
+        var: process_list.stdout
+
+    - name: Display Final Results
+      debug:
+        msg:
+          - "Database Space Utilization: {{ db_space.stdout | default('No output') }}"
+          - "Database Health: {{ db_health.stdout | default('No output') }}"
+          - "Deadlocks: {{ deadlocks.stdout | default('No output') }}"
+          - "MySQL Process List: {{ process_list.stdout | default('No output') }}"
