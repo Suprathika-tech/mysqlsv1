@@ -1,11 +1,11 @@
 ---
 - name: Check MySQL Server Health
   hosts: localhost
-  gather_facts: no
-  # vars:
-  #   mysql_host: "{{ mysql_host }}"
-  #   mysql_user: "{{ mysql_user }}"
-  #   mysql_password: "{{ mysql_password }}"
+  gather_facts: yes  # Enable fact gathering
+  vars:
+    mysql_host: "{{ mysql_host }}"
+    mysql_user: "{{ mysql_user }}"
+    mysql_password: "{{ mysql_password }}"
 
   tasks:
     - name: Ensure mysql-client or mariadb-client is installed
@@ -20,14 +20,4 @@
       ignore_errors: yes
       become: yes
 
-    - name: Check if MySQL client is installed and in PATH
-      ansible.builtin.shell: |
-        which mysql
-      register: mysql_check
-      ignore_errors: yes
-
-    - name: Debug MySQL client path
-      debug:
-        var: mysql_check.stdout
-
-    # Proceed with the rest of your MySQL tasks...
+    # Proceed with MySQL health checks...
