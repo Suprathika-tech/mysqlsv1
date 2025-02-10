@@ -1,6 +1,6 @@
 ---
 - name: Check MySQL Server Database Space
-  hosts: mysql_servers
+  hosts: 10.112.0.10
   become: yes
   # vars:
   #   mysql_host: "localhost"
@@ -20,12 +20,12 @@
         state: present
       when: ansible_os_family == 'RedHat'
 
-    # - name: Check Database Space Utilization
-    #   shell: |
-    #     mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e \
-    #     "SELECT table_schema AS 'Database Name', ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' FROM information_schema.tables GROUP BY table_schema;"
-    #   register: db_space
+    - name: Check Database Space Utilization
+      shell: |
+        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e \
+        "SELECT table_schema AS 'Database Name', ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' FROM information_schema.tables GROUP BY table_schema;"
+      register: db_space
 
-    # - name: Display Database Space Utilization
-    #   debug:
-    #     msg: "{{ db_space.stdout }}"
+    - name: Display Database Space Utilization
+      debug:
+        msg: "{{ db_space.stdout }}"
