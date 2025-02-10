@@ -8,6 +8,12 @@
     mysql_password: "{{ mysql_password }}"
 
   tasks:
+    - name: Ensure mysql-client is installed
+      ansible.builtin.package:
+        name: mysql-client
+        state: present
+      become: yes  # Make sure the task runs with elevated privileges
+
     - name: Get Database Space Utilization
       ansible.builtin.shell: |
         mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SELECT table_schema AS DatabaseName, SUM(data_length + index_length) / 1024 / 1024 AS SizeMB FROM information_schema.tables GROUP BY table_schema;"
