@@ -2,62 +2,32 @@
 - name: Check MySQL Server Health
   hosts: localhost
   gather_facts: no
-  vars:
-    mysql_host: "{{ mysql_host }}"
-    mysql_user: "{{ mysql_user }}"
-    mysql_password: "{{ mysql_password }}"
+  # vars:
+  #   mysql_host: "{{ mysql_host }}"
+  #   mysql_user: "{{ mysql_user }}"
+  #   mysql_password: "{{ mysql_password }}"
 
   tasks:
-    - name: Ensure mysql-client is installed
+    - name: Ensure mysql-client or mariadb-client is installed
       ansible.builtin.package:
-        name: mysql-client
+        name: "{{ item }}"
         state: present
-      become: yes  # Make sure the task runs with elevated privileges
+      loop:
+        - mysql-client
+        - mariadb-client
+        - mysql
+        - mariadb
+      ignore_errors: yes
+      become: yes
 
-    - name: Get Database Space Utilization
+    - name: Check if MySQL client is installed and in PATH
       ansible.builtin.shell: |
-        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SELECT table_schema AS DatabaseName, SUM(data_length + index_length) / 1024 / 1024 AS SizeMB FROM information_schema.tables GROUP BY table_schema;"
-      register: db_space
+        which mysql
+      register: mysql_check
       ignore_errors: yes
 
-    - name: Debug Database Space Utilization Output
+    - name: Debug MySQL client path
       debug:
-        var: db_space.stdout
+        var: mysql_check.stdout
 
-    - name: Get Database Health
-      ansible.builtin.shell: |
-        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW DATABASES;"
-      register: db_health
-      ignore_errors: yes
-
-    - name: Debug Database Health Output
-      debug:
-        var: db_health.stdout
-
-    - name: Check for Deadlocks
-      ansible.builtin.shell: |
-        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW ENGINE INNODB STATUS\G" | grep -A 20 'LATEST DETECTED DEADLOCK'
-      register: deadlocks
-      ignore_errors: yes
-
-    - name: Debug Deadlocks Output
-      debug:
-        var: deadlocks.stdout
-
-    - name: Get MySQL Process List
-      ansible.builtin.shell: |
-        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW FULL PROCESSLIST;"
-      register: process_list
-      ignore_errors: yes
-
-    - name: Debug MySQL Process List Output
-      debug:
-        var: process_list.stdout
-
-    - name: Display Final Results
-      debug:
-        msg:
-          - "Database Space Utilization: {{ db_space.stdout | default('No output') }}"
-          - "Database Health: {{ db_health.stdout | default('No output') }}"
-          - "Deadlocks: {{ deadlocks.stdout | default('No output') }}"
-          - "MySQL Process List: {{ process_list.stdout | default('No output') }}"
+    # Proceed with the rest of your MySQL tasks...
