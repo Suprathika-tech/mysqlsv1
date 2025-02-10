@@ -2,10 +2,10 @@
 - name: Check MySQL Server Database Space
   hosts: mysql_servers
   become: yes
-  vars:
-    mysql_host: "localhost"
-    mysql_user: "mysqlauto"
-    mysql_password: "mysqlAutomation"
+  # vars:
+  #   mysql_host: "localhost"
+  #   mysql_user: "mysqlauto"
+  #   mysql_password: "mysqlAutomation"
     
   tasks:
     - name: Install MySQL client if not present
@@ -20,12 +20,12 @@
         state: present
       when: ansible_os_family == 'RedHat'
 
-    - name: Check Database Space Utilization
-      shell: |
-        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e \
-        "SELECT table_schema AS 'Database Name', ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' FROM information_schema.tables GROUP BY table_schema;"
-      register: db_space
+    # - name: Check Database Space Utilization
+    #   shell: |
+    #     mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e \
+    #     "SELECT table_schema AS 'Database Name', ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' FROM information_schema.tables GROUP BY table_schema;"
+    #   register: db_space
 
-    - name: Display Database Space Utilization
-      debug:
-        msg: "{{ db_space.stdout }}"
+    # - name: Display Database Space Utilization
+    #   debug:
+    #     msg: "{{ db_space.stdout }}"
