@@ -1,29 +1,57 @@
 ---
 - name: Check MySQL Server Health
   hosts: localhost
-  gather_facts: yes  # Enable fact gathering
+  gather_facts: no
   vars:
     mysql_host: "{{ mysql_host }}"
     mysql_user: "{{ mysql_user }}"
     mysql_password: "{{ mysql_password }}"
 
   tasks:
-    - name: Ensure mysql-client or mariadb-client is installed
-      ansible.builtin.package:
-        name: "{{ item }}"
-        state: present
-      loop:
-        - mysql-client
-        - mariadb-client
-        - mysql
-        - mariadb
+    - name: Get Database Space Utilization
+      ansible.builtin.shell: |
+        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SELECT table_schema AS DatabaseName, SUM(data_length + index_length) / 1024 / 1024 AS SizeMB FROM information_schema.tables GROUP BY table_schema;"
+      register: db_space
       ignore_errors: yes
-      become: yes
 
- # - name: Ensure mysql-client is installed
- #    ansible.builtin.package:
- #      name: mysql-client
- #      state: present
- #    ignore_errors: yes
+    - name: Debug Database Space Utilization Output
+      debug:
+        var: db_space.stdout
 
-    # Proceed with MySQL health checks...
+    - name: Get Database Health
+      ansible.builtin.shell: |
+        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW DATABASES;"
+      register: db_health
+      ignore_errors: yes
+
+    - name: Debug Database Health Output
+      debug:
+        var: db_health.stdout
+
+    - name: Check for Deadlocks
+      ansible.builtin.shell: |
+        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW ENGINE INNODB STATUS\G" | grep -A 20 'LATEST DETECTED DEADLOCK'
+      register: deadlocks
+      ignore_errors: yes
+
+    - name: Debug Deadlocks Output
+      debug:
+        var: deadlocks.stdout
+
+    - name: Get MySQL Process List
+      ansible.builtin.shell: |
+        mysql -h {{ mysql_host }} -u {{ mysql_user }} -p{{ mysql_password }} -e "SHOW FULL PROCESSLIST;"
+      register: process_list
+      ignore_errors: yes
+
+    - name: Debug MySQL Process List Output
+      debug:
+        var: process_list.stdout
+
+    - name: Display Final Results
+      debug:
+        msg:
+          - "Database Space Utilization: {{ db_space.stdout | default('No output') }}"
+          - "Database Health: {{ db_health.stdout | default('No output') }}"
+          - "Deadlocks: {{ deadlocks.stdout | default('No output') }}"
+          - "MySQL Process List: {{ process_list.stdout | default('No output') }}"
