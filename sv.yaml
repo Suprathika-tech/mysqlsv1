@@ -20,10 +20,10 @@
       ignore_errors: yes
       become: yes
 
- - name: Ensure mysql-client is installed
-    ansible.builtin.package:
-      name: mysql-client
-      state: present
-    ignore_errors: yes
+ # - name: Ensure mysql-client is installed
+ #    ansible.builtin.package:
+ #      name: mysql-client
+ #      state: present
+ #    ignore_errors: yes
 
     # Proceed with MySQL health checks...
