@@ -1,0 +1,129 @@
+---
+- name: Automated Azure License Provisioning with ServiceNow Integration
+  hosts: localhost
+  gather_facts: no
+  vars:
+    azure_tenant_id: "your-tenant-id"
+    azure_client_id: "your-client-id"
+    azure_client_secret: "your-client-secret"
+    service_now_instance: "your-instance.service-now.com"
+    service_now_user: "your-user"
+    service_now_password: "your-password"
+    user_email: "{{ user_email }}"
+    charge_code: "{{ charge_code }}"
+    requested_license: "{{ requested_license }}"
+    approval_required: true
+
+  tasks:
+    - name: Authenticate with Azure and get access token
+      uri:
+        url: "https://login.microsoftonline.com/{{ azure_tenant_id }}/oauth2/token"
+        method: POST
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+        body: "grant_type=client_credentials&client_id={{ azure_client_id }}&client_secret={{ azure_client_secret }}&resource=https://management.azure.com/"
+        body_format: form-urlencoded
+        return_content: yes
+      register: auth_response
+      
+    - name: Set Azure Access Token
+      set_fact:
+        azure_access_token: "{{ auth_response.json.access_token }}"
+      
+    - name: Retrieve License Request from ServiceNow
+      uri:
+        url: "https://{{ service_now_instance }}/api/now/table/incident?sysparm_query=state=1"
+        method: GET
+        user: "{{ service_now_user }}"
+        password: "{{ service_now_password }}"
+        return_content: yes
+        headers:
+          Accept: "application/json"
+        force_basic_auth: yes
+      register: request_details
+      
+    - name: Check License Availability in Azure
+      uri:
+        url: "https://management.azure.com/providers/Microsoft.Licensing/licenses?api-version=2021-10-01"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ azure_access_token }}"
+          Content-Type: "application/json"
+        return_content: yes
+      register: license_availability
+      
+    - name: Handle License Unavailability
+      uri:
+        url: "https://{{ service_now_instance }}/api/now/table/incident/{{ request_details.json.result[0].sys_id }}"
+        method: PATCH
+        user: "{{ service_now_user }}"
+        password: "{{ service_now_password }}"
+        return_content: yes
+        headers:
+          Accept: "application/json"
+        body_format: json
+        body:
+          state: "2"  # Pending state
+          comments: "Requested license unavailable. Request placed on hold."
+        force_basic_auth: yes
+      when: license_availability.json.available == false
+
+    - name: Wait for Approval (If Required)
+      pause:
+        seconds: 30
+      when: approval_required and license_availability.json.available == true
+      
+    - name: Assign License to User
+      uri:
+        url: "https://management.azure.com/providers/Microsoft.Licensing/assignLicense?api-version=2021-10-01"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ azure_access_token }}"
+          Content-Type: "application/json"
+        body:
+          user_email: "{{ user_email }}"
+          charge_code: "{{ charge_code }}"
+          license_type: "{{ requested_license }}"
+        body_format: json
+        return_content: yes
+      register: license_assignment_result
+      when: license_availability.json.available == true
+
+    - name: Log License Assignment Activity
+      debug:
+        msg: "User {{ user_email }} successfully assigned license {{ requested_license }}."
+      when: license_assignment_result is success
+
+    - name: Update ServiceNow Ticket - Assignment Successful
+      uri:
+        url: "https://{{ service_now_instance }}/api/now/table/incident/{{ request_details.json.result[0].sys_id }}"
+        method: PATCH
+        user: "{{ service_now_user }}"
+        password: "{{ service_now_password }}"
+        return_content: yes
+        headers:
+          Accept: "application/json"
+        body_format: json
+        body:
+          state: "3"  # Resolved state
+          close_notes: "License {{ requested_license }} assigned to {{ user_email }}."
+        force_basic_auth: yes
+      when: license_assignment_result is success
+
+    - name: Notify User about License Assignment
+      debug:
+        msg: "Notification sent to {{ user_email }} about successful license assignment."
+
+    - name: Mark ServiceNow Request as Closed
+      uri:
+        url: "https://{{ service_now_instance }}/api/now/table/incident/{{ request_details.json.result[0].sys_id }}"
+        method: PATCH
+        user: "{{ service_now_user }}"
+        password: "{{ service_now_password }}"
+        return_content: yes
+        headers:
+          Accept: "application/json"
+        body_format: json
+        body:
+          state: "7"  # Closed state
+        force_basic_auth: yes
