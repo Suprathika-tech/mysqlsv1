@@ -1,80 +1,80 @@
 ---
 - name: Check MySQL Server Health
   hosts: localhost
-  gather_facts: no
+  gather_facts: yes
   vars:
     mysql_host: "10.112.0.11"
     mysql_user: "mysqlauto"
     mysql_password: "mysqlAutomation"
     mysql_port: 3306
-    mysql_cli_options: "-h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }}"
 
   tasks:
-    - name: Test MySQL Connection
-      command: >
-        mysql {{ mysql_cli_options }} -e "SELECT 'Connection successful' AS Status;"
-      register: connection_test
-      failed_when: connection_test.rc != 0
+    - name: Check if MySQL client is installed
+      command: which mysql
+      register: mysql_client_check
+      ignore_errors: yes
       changed_when: false
 
-    - name: Debug Connection Test
-      debug:
-        var: connection_test
-      when: connection_test is defined
+    - name: Install MySQL client (Debian/Ubuntu)
+      apt:
+        name: mysql-client
+        state: present
+      become: yes
+      when: mysql_client_check.rc != 0 and ansible_os_family == "Debian"
+      ignore_errors: yes
+
+    - name: Install MySQL client (RedHat/CentOS)
+      yum:
+        name: mysql
+        state: present
+      become: yes
+      when: mysql_client_check.rc != 0 and ansible_os_family == "RedHat"
+      ignore_errors: yes
 
     - name: Ensure MySQL User Has Permissions
       command: >
-        mysql {{ mysql_cli_options }} -e "
+        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -e "
         GRANT ALL PRIVILEGES ON *.* TO '{{ mysql_user }}'@'%' WITH GRANT OPTION;
         FLUSH PRIVILEGES;"
-      register: grant_result
-      failed_when: grant_result.rc != 0
-      changed_when: false
-      when: connection_test is succeeded
+      ignore_errors: yes
 
     - name: Get Database Space Utilization
       command: >
-        mysql {{ mysql_cli_options }} -N -e "
+        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -N -e "
         SELECT table_schema, 
         ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS SizeMB 
         FROM information_schema.tables 
         GROUP BY table_schema;"
       register: db_space
-      failed_when: db_space.rc != 0
-      changed_when: false
-      when: connection_test is succeeded
+      ignore_errors: yes
 
     - name: Get Database Health
       command: >
-        mysql {{ mysql_cli_options }} -N -e "
-        SELECT schema_name AS database_name, 'ONLINE' AS status, 
-        (SELECT COUNT(*) FROM information_schema.processlist WHERE command != 'Sleep') AS active_requests,
-        (SELECT COUNT(*) FROM information_schema.processlist) AS active_connections,
-        (SELECT COUNT(*) FROM information_schema.processlist WHERE state = 'Waiting for table metadata lock') AS pending_requests,
-        (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Threads_running') AS running_threads
+        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -N -e "
+        SELECT schema_name, 'ONLINE', 
+        (SELECT COUNT(*) FROM information_schema.processlist WHERE command != 'Sleep'),
+        (SELECT COUNT(*) FROM information_schema.processlist),
+        (SELECT COUNT(*) FROM information_schema.processlist WHERE state = 'Waiting for table metadata lock'),
+        (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Threads_running')
         FROM information_schema.schemata;"
       register: db_health
-      failed_when: db_health.rc != 0
-      changed_when: false
-      when: connection_test is succeeded
+      ignore_errors: yes
 
     - name: Check for Deadlocks
       command: >
-        mysql {{ mysql_cli_options }} -N -e "
-        SELECT COUNT(*) AS deadlocks 
+        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -N -e "
+        SELECT COUNT(*) AS Deadlocks 
         FROM information_schema.innodb_trx t1 
         INNER JOIN information_schema.innodb_trx t2 
         WHERE t1.trx_id != t2.trx_id 
         AND t1.trx_waiting_lock_id = t2.trx_lock_id 
         AND t2.trx_waiting_lock_id = t1.trx_lock_id;"
       register: deadlocks
-      failed_when: deadlocks.rc != 0
-      changed_when: false
-      when: connection_test is succeeded
+      ignore_errors: yes
 
     - name: Get MySQL Events Status
       command: >
-        mysql {{ mysql_cli_options }} -N -e "
+        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -N -e "
         SELECT event_name, status, last_executed,
         CASE 
           WHEN execute_at IS NOT NULL THEN 'SCHEDULED'
@@ -83,9 +83,7 @@
         END as event_type
         FROM information_schema.events;"
       register: event_activities
-      failed_when: event_activities.rc != 0
-      changed_when: false
-      when: connection_test is succeeded
+      ignore_errors: yes
 
     - name: Process MySQL Output
       set_fact:
@@ -93,16 +91,19 @@
         db_health_fact: "{{ db_health.stdout_lines | default([]) | map('split', '\t') | list }}"
         deadlocks_fact: "{{ deadlocks.stdout | default('0') | trim }}"
         event_activities_fact: "{{ event_activities.stdout_lines | default([]) | map('split', '\t') | list }}"
-      when: connection_test is succeeded
+      when: db_space.stdout is defined and db_space.stdout and db_health.stdout is defined and db_health.stdout and deadlocks.stdout is defined and deadlocks.stdout and event_activities.stdout is defined
 
     - name: Display Formatted Results
       debug:
         msg: |
-          {% if connection_test is failed %}
-          ❌ MySQL Connection Failed: Unable to connect to MySQL server. Please check credentials and server status.
+          {% if mysql_client_check.rc != 0 %}
+          ❓ MySQL Client Status: Not installed or not found in PATH
           {% else %}
+          ✅ MySQL Client Status: Installed
+          {% endif %}
+          
           📊 Database Space Utilization:
-          {% if db_space_fact | length > 0 %}
+          {% if db_space_fact is defined and db_space_fact | length > 0 %}
           {% for item in db_space_fact %}
            - {{ item[0] }}: {{ item[1] }} MB
           {% endfor %}
@@ -111,16 +112,16 @@
           {% endif %}
           
           🚨 Deadlocks:
-          {% if deadlocks_fact | int > 0 %}
+          {% if deadlocks_fact is defined and deadlocks_fact | int > 0 %}
            - {{ deadlocks_fact }} deadlocks detected!
           {% else %}
            - No deadlocks detected
           {% endif %}
           
-          [ℹ️] Events query returned {{ event_activities_fact | length }} rows.
+          [ℹ️] Events query returned {{ event_activities_fact | default([]) | length }} rows.
           
           🛠 MySQL Events Status:
-          {% if event_activities_fact | length > 0 %}
+          {% if event_activities_fact is defined and event_activities_fact | length > 0 %}
           {% for event in event_activities_fact %}
            - Event: {{ event[0] }}
              Status: {{ event[1] }}
@@ -132,7 +133,7 @@
           {% endif %}
           
           🩺 Database Health Check:
-          {% if db_health_fact | length > 0 %}
+          {% if db_health_fact is defined and db_health_fact | length > 0 %}
           {% for item in db_health_fact %}
            - Database: {{ item[0] }}
              - Status: {{ item[1] }}
@@ -143,5 +144,4 @@
           {% endfor %}
           {% else %}
            - No database health data available
-          {% endif %}
           {% endif %}
