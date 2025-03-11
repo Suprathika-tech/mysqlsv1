@@ -1,145 +1,51 @@
 ---
-- name: Check MySQL Server Health
+- name: Basic MySQL Server Health Check
   hosts: localhost
-  gather_facts: yes
+  gather_facts: no
   vars:
     mysql_host: "10.112.0.11"
-    mysql_user: "mysqlauto"
-    mysql_password: "mysqlAutomation"
     mysql_port: 3306
 
   tasks:
-    - name: Check if python3-mysqldb or python-mysqldb is installed
-      package:
-        name: "{{ item }}"
-        state: present
-      become: yes
-      with_items:
-        - python3-mysqldb
-        - python-mysqldb
-      register: mysql_python_installation
+    - name: Check if MySQL server is reachable (TCP connection)
+      wait_for:
+        host: "{{ mysql_host }}"
+        port: "{{ mysql_port }}"
+        timeout: 5
+        state: started
+      register: mysql_connection
       ignore_errors: yes
 
-    - name: Get Database Space Utilization
-      community.mysql.mysql_query:
-        login_host: "{{ mysql_host }}"
-        login_user: "{{ mysql_user }}"
-        login_password: "{{ mysql_password }}"
-        login_port: "{{ mysql_port }}"
-        query: >
-          SELECT table_schema as DatabaseName, 
-          ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS SizeMB 
-          FROM information_schema.tables 
-          GROUP BY table_schema;
-      register: db_space
-      ignore_errors: yes
-
-    - name: Get Database Health
-      community.mysql.mysql_query:
-        login_host: "{{ mysql_host }}"
-        login_user: "{{ mysql_user }}"
-        login_password: "{{ mysql_password }}"
-        login_port: "{{ mysql_port }}"
-        query: >
-          SELECT 
-            schema_name as DatabaseName, 
-            'ONLINE' as Status, 
-            (SELECT COUNT(*) FROM information_schema.processlist WHERE command != 'Sleep') as ActiveRequests,
-            (SELECT COUNT(*) FROM information_schema.processlist) as ActiveUserConnections,
-            (SELECT COUNT(*) FROM information_schema.processlist WHERE state = 'Waiting for table metadata lock') as PendingRequests,
-            (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Threads_running') as CPUQueueLength
-          FROM information_schema.schemata;
-      register: db_health
-      ignore_errors: yes
-
-    - name: Check for Deadlocks
-      community.mysql.mysql_query:
-        login_host: "{{ mysql_host }}"
-        login_user: "{{ mysql_user }}"
-        login_password: "{{ mysql_password }}"
-        login_port: "{{ mysql_port }}"
-        query: >
-          SELECT COUNT(*) AS Deadlocks 
-          FROM information_schema.innodb_trx t1 
-          INNER JOIN information_schema.innodb_trx t2 
-          WHERE t1.trx_id != t2.trx_id 
-          AND t1.trx_waiting_lock_id = t2.trx_lock_id 
-          AND t2.trx_waiting_lock_id = t1.trx_lock_id;
-      register: deadlocks
-      ignore_errors: yes
-
-    - name: Get MySQL Events Status
-      community.mysql.mysql_query:
-        login_host: "{{ mysql_host }}"
-        login_user: "{{ mysql_user }}"
-        login_password: "{{ mysql_password }}"
-        login_port: "{{ mysql_port }}"
-        query: >
-          SELECT 
-            event_name, 
-            status, 
-            last_executed,
-            CASE 
-              WHEN execute_at IS NOT NULL THEN 'SCHEDULED'
-              WHEN on_completion = 'PRESERVE' THEN 'RECURRING'
-              ELSE 'ONE-TIME'
-            END as event_type
-          FROM information_schema.events;
-      register: event_activities
-      ignore_errors: yes
-
-    - name: Display Formatted Results
+    - name: Display MySQL connectivity status
       debug:
         msg: |
-          {% if mysql_python_installation.failed is defined and mysql_python_installation.failed %}
-          ❓ MySQL Python Module Status: Installation failed. Please install python3-mysqldb or python-mysqldb manually.
-          {% endif %}
+          🔍 MySQL Server Connectivity Check:
           
-          📊 Database Space Utilization:
-          {% if db_space.query_result is defined and db_space.query_result.rowcount > 0 %}
-          {% for row in db_space.query_result.rows %}
-           - {{ row.DatabaseName }}: {{ row.SizeMB }} MB
-          {% endfor %}
-          {% else %}
-           - No database space data available
-          {% endif %}
+          {% if mysql_connection is succeeded %}
+          ✅ MySQL server at {{ mysql_host }}:{{ mysql_port }} is REACHABLE
           
-          🚨 Deadlocks:
-          {% if deadlocks.query_result is defined and deadlocks.query_result.rowcount > 0 %}
-          {% set deadlock_count = deadlocks.query_result.rows[0].Deadlocks %}
-          {% if deadlock_count | int > 0 %}
-           - {{ deadlock_count }} deadlocks detected!
-          {% else %}
-           - No deadlocks detected
-          {% endif %}
-          {% else %}
-           - No deadlocks data available
-          {% endif %}
+          This means the server is:
+           - Running and accepting connections
+           - Not blocked by firewalls
+           - Network route is available
           
-          [ℹ️] Events query returned {% if event_activities.query_result is defined %}{{ event_activities.query_result.rowcount }}{% else %}0{% endif %} rows.
-          
-          🛠 MySQL Events Status:
-          {% if event_activities.query_result is defined and event_activities.query_result.rowcount > 0 %}
-          {% for row in event_activities.query_result.rows %}
-           - Event: {{ row.event_name }}
-             Status: {{ row.status }}
-             Last Executed: {{ row.last_executed }}
-             Type: {{ row.event_type }}
-          {% endfor %}
+          For more detailed health information, you will need:
+           - MySQL client installed on this machine
+           - Proper credentials with sufficient privileges
+           - Additional configuration may be required
           {% else %}
-           - No events data available
-          {% endif %}
+          ❌ MySQL server at {{ mysql_host }}:{{ mysql_port }} is UNREACHABLE
           
-          🩺 Database Health Check:
-          {% if db_health.query_result is defined and db_health.query_result.rowcount > 0 %}
-          {% for row in db_health.query_result.rows %}
-           - Database: {{ row.DatabaseName }}
-             - Status: {{ row.Status }}
-             - Active Requests: {{ row.ActiveRequests }}
-             - Active User Connections: {{ row.ActiveUserConnections }}
-             - Pending Requests: {{ row.PendingRequests }}
-             - Running Threads: {{ row.CPUQueueLength }}
-          {% endfor %}
-          {% else %}
-           - No database health data available
+          Possible reasons:
+           - MySQL service is not running
+           - Server is down or restarting
+           - Port 3306 is blocked by firewall
+           - Network connectivity issues
+           - Wrong IP address or port
+          
+          Recommended actions:
+           - Verify MySQL is running on the server
+           - Check firewall settings
+           - Confirm network connectivity
+           - Verify host and port configuration
           {% endif %}
