@@ -1,13 +1,21 @@
 ---
-- name: Basic MySQL Server Health Check
+- name: Comprehensive MySQL Server Health Check
   hosts: localhost
   gather_facts: no
   vars:
+    # Configure these variables for your environment
     mysql_host: "10.112.0.11"
+    mysql_user: "mysqlauto"
+    mysql_password: "mysqlAutomation"
     mysql_port: 3306
+    # Alternative host if primary is unreachable
+    mysql_backup_host: "localhost"
+    # Set to true to check alternative host if primary is unreachable
+    try_alternative_host: true
 
   tasks:
-    - name: Check if MySQL server is reachable (TCP connection)
+    # First check basic connectivity
+    - name: Check if primary MySQL server is reachable (TCP connection)
       wait_for:
         host: "{{ mysql_host }}"
         port: "{{ mysql_port }}"
@@ -16,36 +24,176 @@
       register: mysql_connection
       ignore_errors: yes
 
-    - name: Display MySQL connectivity status
+    # Try alternative host if configured
+    - name: Check if alternative MySQL server is reachable
+      wait_for:
+        host: "{{ mysql_backup_host }}"
+        port: "{{ mysql_port }}"
+        timeout: 5
+        state: started
+      register: mysql_backup_connection
+      ignore_errors: yes
+      when: mysql_connection.failed is defined and mysql_connection.failed and try_alternative_host
+
+    # Set active host based on connectivity
+    - name: Set active MySQL host
+      set_fact:
+        active_mysql_host: "{{ mysql_backup_host if (mysql_connection.failed is defined and mysql_connection.failed and mysql_backup_connection is succeeded) else mysql_host }}"
+      when: mysql_connection is defined
+
+    # Check if MySQL client is installed
+    - name: Check if MySQL client is installed
+      command: which mysql
+      register: mysql_client_check
+      ignore_errors: yes
+      changed_when: false
+
+    # Try to execute MySQL queries using shell/command if client is available
+    - name: Get Database Space Utilization
+      shell: >
+        mysql -h{{ active_mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} -p{{ mysql_password }} -N -e "
+        SELECT table_schema, 
+        ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS SizeMB 
+        FROM information_schema.tables 
+        GROUP BY table_schema;"
+      register: db_space
+      ignore_errors: yes
+      no_log: true
+      when: mysql_client_check.rc == 0 and (mysql_connection is succeeded or (mysql_backup_connection is defined and mysql_backup_connection is succeeded))
+
+    - name: Get Database Health
+      shell: >
+        mysql -h{{ active_mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} -p{{ mysql_password }} -N -e "
+        SELECT schema_name, 'ONLINE', 
+        (SELECT COUNT(*) FROM information_schema.processlist WHERE command != 'Sleep'),
+        (SELECT COUNT(*) FROM information_schema.processlist),
+        (SELECT COUNT(*) FROM information_schema.processlist WHERE state = 'Waiting for table metadata lock'),
+        (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Threads_running')
+        FROM information_schema.schemata;"
+      register: db_health
+      ignore_errors: yes
+      no_log: true
+      when: mysql_client_check.rc == 0 and (mysql_connection is succeeded or (mysql_backup_connection is defined and mysql_backup_connection is succeeded))
+
+    - name: Check for Deadlocks
+      shell: >
+        mysql -h{{ active_mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} -p{{ mysql_password }} -N -e "
+        SELECT COUNT(*) AS Deadlocks 
+        FROM information_schema.innodb_trx t1 
+        INNER JOIN information_schema.innodb_trx t2 
+        WHERE t1.trx_id != t2.trx_id 
+        AND t1.trx_waiting_lock_id = t2.trx_lock_id 
+        AND t2.trx_waiting_lock_id = t1.trx_lock_id;"
+      register: deadlocks
+      ignore_errors: yes
+      no_log: true
+      when: mysql_client_check.rc == 0 and (mysql_connection is succeeded or (mysql_backup_connection is defined and mysql_backup_connection is succeeded))
+
+    - name: Get MySQL Events Status
+      shell: >
+        mysql -h{{ active_mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} -p{{ mysql_password }} -N -e "
+        SELECT event_name, status, last_executed,
+        CASE 
+          WHEN execute_at IS NOT NULL THEN 'SCHEDULED'
+          WHEN on_completion = 'PRESERVE' THEN 'RECURRING'
+          ELSE 'ONE-TIME'
+        END as event_type
+        FROM information_schema.events;"
+      register: event_activities
+      ignore_errors: yes
+      no_log: true
+      when: mysql_client_check.rc == 0 and (mysql_connection is succeeded or (mysql_backup_connection is defined and mysql_backup_connection is succeeded))
+
+    - name: Process MySQL Output
+      set_fact:
+        db_space_fact: "{{ db_space.stdout_lines | default([]) }}"
+        db_health_fact: "{{ db_health.stdout_lines | default([]) }}"
+        deadlocks_fact: "{{ deadlocks.stdout | default('0') | trim }}"
+        event_activities_fact: "{{ event_activities.stdout_lines | default([]) }}"
+      when: db_space is defined and db_space.stdout is defined
+
+    # Comprehensive report
+    - name: Display MySQL Health Check Report
       debug:
         msg: |
-          🔍 MySQL Server Connectivity Check:
+          🔍 MYSQL SERVER HEALTH CHECK REPORT
           
-          {% if mysql_connection is succeeded %}
-          ✅ MySQL server at {{ mysql_host }}:{{ mysql_port }} is REACHABLE
+          🌐 Connectivity:
+          Primary server ({{ mysql_host }}:{{ mysql_port }}): {% if mysql_connection is succeeded %}✅ REACHABLE{% else %}❌ UNREACHABLE{% endif %}
+          {% if try_alternative_host and mysql_backup_connection is defined %}
+          Alternative server ({{ mysql_backup_host }}:{{ mysql_port }}): {% if mysql_backup_connection is succeeded %}✅ REACHABLE{% else %}❌ UNREACHABLE{% endif %}
+          {% endif %}
+          Active host: {{ active_mysql_host | default('None - No connectivity') }}
           
-          This means the server is:
-           - Running and accepting connections
-           - Not blocked by firewalls
-           - Network route is available
+          🛠️ Client Status:
+          MySQL client: {% if mysql_client_check.rc == 0 %}✅ INSTALLED{% else %}❌ NOT INSTALLED{% endif %}
           
-          For more detailed health information, you will need:
-           - MySQL client installed on this machine
-           - Proper credentials with sufficient privileges
-           - Additional configuration may be required
+          {% if mysql_client_check.rc == 0 and (mysql_connection is succeeded or (mysql_backup_connection is defined and mysql_backup_connection is succeeded)) %}
+          📊 Database Space Utilization:
+          {% if db_space_fact | length > 0 %}
+          {% for item in db_space_fact %}
+           - {{ item.split('\t')[0] }}: {{ item.split('\t')[1] }} MB
+          {% endfor %}
           {% else %}
-          ❌ MySQL server at {{ mysql_host }}:{{ mysql_port }} is UNREACHABLE
+           - No database space data available
+          {% endif %}
           
-          Possible reasons:
-           - MySQL service is not running
-           - Server is down or restarting
-           - Port 3306 is blocked by firewall
-           - Network connectivity issues
-           - Wrong IP address or port
+          🚨 Deadlocks:
+          {% if deadlocks_fact | int > 0 %}
+           - {{ deadlocks_fact }} deadlocks detected!
+          {% else %}
+           - No deadlocks detected
+          {% endif %}
           
-          Recommended actions:
-           - Verify MySQL is running on the server
-           - Check firewall settings
-           - Confirm network connectivity
-           - Verify host and port configuration
+          [ℹ️] Events query returned {{ event_activities_fact | length }} rows.
+          
+          🛠 MySQL Events Status:
+          {% if event_activities_fact | length > 0 %}
+          {% for line in event_activities_fact %}
+          {% set event_parts = line.split('\t') %}
+           - Event: {{ event_parts[0] }}
+             Status: {{ event_parts[1] }}
+             Last Executed: {{ event_parts[2] }}
+             Type: {{ event_parts[3] }}
+          {% endfor %}
+          {% else %}
+           - No events data available
+          {% endif %}
+          
+          🩺 Database Health Check:
+          {% if db_health_fact | length > 0 %}
+          {% for line in db_health_fact %}
+          {% set health_parts = line.split('\t') %}
+           - Database: {{ health_parts[0] }}
+             - Status: {{ health_parts[1] }}
+             - Active Requests: {{ health_parts[2] }}
+             - Active User Connections: {{ health_parts[3] }}
+             - Pending Requests: {{ health_parts[4] }}
+             - Running Threads: {{ health_parts[5] }}
+          {% endfor %}
+          {% else %}
+           - No database health data available
+          {% endif %}
+          {% else %}
+          
+          ⚠️ Unable to perform detailed MySQL health checks:
+          {% if not mysql_connection is succeeded and (mysql_backup_connection is not defined or not mysql_backup_connection is succeeded) %}
+           - No MySQL server is reachable
+           - Check network connectivity and firewall settings
+           - Verify MySQL is running on target servers
+          {% elif mysql_client_check.rc != 0 %}
+           - MySQL client is not installed
+           - Install MySQL client package to enable detailed checks
+          {% endif %}
+          
+          📋 Troubleshooting tips:
+           1. Verify MySQL service is running on target server:
+              $ ssh user@{{ mysql_host }} "systemctl status mysql"
+           2. Check MySQL is listening on the expected port:
+              $ ssh user@{{ mysql_host }} "netstat -tlnp | grep 3306"
+           3. Verify MySQL is configured to accept remote connections:
+              $ ssh user@{{ mysql_host }} "grep bind-address /etc/mysql/my.cnf"
+           4. Check local MySQL client installation:
+              $ apt-get install mysql-client # (Debian/Ubuntu)
+              $ yum install mysql # (RedHat/CentOS)
           {% endif %}
