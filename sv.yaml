@@ -11,14 +11,14 @@
   tasks:
     - name: Ensure MySQL User Has Permissions
       shell: |
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} -p{{ mysql_password }} -e "
+        mysql -h {{ mysql_host }} -P {{ mysql_port }} -u {{ mysql_user }} -p"{{ mysql_password }}" -e "
         GRANT ALL PRIVILEGES ON *.* TO '{{ mysql_user }}'@'%' WITH GRANT OPTION;
         FLUSH PRIVILEGES;"
       ignore_errors: yes
 
     - name: Get Database Space Utilization
       shell: |
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} -p{{ mysql_password }} -N -e "
+        mysql -h {{ mysql_host }} -P {{ mysql_port }} -u {{ mysql_user }} -p"{{ mysql_password }}" -N -e "
         SELECT table_schema, 
         ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS SizeMB 
         FROM information_schema.tables 
@@ -28,7 +28,7 @@
 
     - name: Get Database Health
       shell: |
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} -p{{ mysql_password }} -N -e "
+        mysql -h {{ mysql_host }} -P {{ mysql_port }} -u {{ mysql_user }} -p"{{ mysql_password }}" -N -e "
         SELECT schema_name, 'ONLINE', 
         (SELECT COUNT(*) FROM information_schema.processlist WHERE command != 'Sleep'),
         (SELECT COUNT(*) FROM information_schema.processlist),
@@ -40,7 +40,7 @@
 
     - name: Check for Deadlocks
       shell: |
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} -p{{ mysql_password }} -N -e "
+        mysql -h {{ mysql_host }} -P {{ mysql_port }} -u {{ mysql_user }} -p"{{ mysql_password }}" -N -e "
         SELECT COUNT(*) AS Deadlocks 
         FROM information_schema.innodb_trx t1 
         INNER JOIN information_schema.innodb_trx t2 
@@ -52,7 +52,7 @@
 
     - name: Get MySQL Events Status
       shell: |
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} -p{{ mysql_password }} -N -e "
+        mysql -h {{ mysql_host }} -P {{ mysql_port }} -u {{ mysql_user }} -p"{{ mysql_password }}" -N -e "
         SELECT event_name, status, last_executed,
         CASE 
           WHEN execute_at IS NOT NULL THEN 'SCHEDULED'
@@ -63,36 +63,56 @@
       register: event_activities
       ignore_errors: yes
 
+    - name: Check MySQL connection
+      shell: |
+        mysql -h {{ mysql_host }} -P {{ mysql_port }} -u {{ mysql_user }} -p"{{ mysql_password }}" -e "SELECT 1;"
+      register: connection_test
+      ignore_errors: yes
+
+    - name: Debug MySQL connection
+      debug:
+        var: connection_test
+        verbosity: 1
+
     - name: Process MySQL Output
       set_fact:
-        db_space_fact: "{{ db_space.stdout_lines | map('split', '\t') | map('list') | map('dict', ['DatabaseName', 'SizeMB']) | list }}"
-        db_health_fact: "{{ db_health.stdout_lines | map('split', '\t') | map('list') | map('dict', ['DatabaseName', 'Status', 'ActiveRequests', 'ActiveUserConnections', 'PendingRequests', 'CPUQueueLength']) | list }}"
-        deadlocks_fact: "{{ {'Deadlocks': deadlocks.stdout | trim | int } }}"
-        event_activities_fact: "{{ event_activities.stdout_lines | map('split', '\t') | map('list') | map('dict', ['event_name', 'status', 'last_executed', 'event_type']) | list }}"
+        db_space_fact: "{{ db_space.stdout_lines | default([]) | map('split', '\t') | map('list') | map('dict', ['DatabaseName', 'SizeMB']) | list }}"
+        db_health_fact: "{{ db_health.stdout_lines | default([]) | map('split', '\t') | map('list') | map('dict', ['DatabaseName', 'Status', 'ActiveRequests', 'ActiveUserConnections', 'PendingRequests', 'CPUQueueLength']) | list }}"
+        deadlocks_fact: "{{ {'Deadlocks': deadlocks.stdout | default('0') | trim | int } }}"
+        event_activities_fact: "{{ event_activities.stdout_lines | default([]) | map('split', '\t') | map('list') | map('dict', ['event_name', 'status', 'last_executed', 'event_type']) | list }}"
+      when: db_space.stdout is defined and db_health.stdout is defined and deadlocks.stdout is defined and event_activities.stdout is defined
 
     - name: Display Formatted Results
       debug:
         msg: |
           📊 Database Space Utilization:
-          {% for item in db_space_fact %}
+          {% for item in db_space_fact | default([]) %}
            - {{ item.DatabaseName }}: {{ item.SizeMB }} MB
+          {% else %}
+           - No database space data available
           {% endfor %}
+          
           🚨 Deadlocks:
-          {% if deadlocks_fact.Deadlocks > 0 %}
+          {% if deadlocks_fact.Deadlocks | default(0) > 0 %}
            - {{ deadlocks_fact.Deadlocks }} deadlocks detected!
           {% else %}
            - No deadlocks detected
           {% endif %}
-          [ℹ️] Events query returned {{ event_activities_fact | length }} rows.
+          
+          [ℹ️] Events query returned {{ event_activities_fact | default([]) | length }} rows.
+          
           🛠 MySQL Events Status:
-          {% for event in event_activities_fact %}
+          {% for event in event_activities_fact | default([]) %}
            - Event: {{ event.event_name }}
              Status: {{ event.status }}
              Last Executed: {{ event.last_executed }}
              Type: {{ event.event_type }}
+          {% else %}
+           - No events data available
           {% endfor %}
+          
           🩺 Database Health Check:
-          {% if db_health_fact | length > 0 %}
+          {% if db_health_fact | default([]) | length > 0 %}
             {% for item in db_health_fact %}
                - Database: {{ item.DatabaseName }}
                  - Status: {{ item.Status }}
