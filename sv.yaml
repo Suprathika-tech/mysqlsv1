@@ -9,138 +9,136 @@
     mysql_port: 3306
 
   tasks:
-    - name: Check if MySQL client is installed
-      command: which mysql
-      register: mysql_client_check
-      ignore_errors: yes
-      changed_when: false
-
-    - name: Install MySQL client (Debian/Ubuntu)
-      apt:
-        name: mysql-client
+    - name: Check if python3-mysqldb or python-mysqldb is installed
+      package:
+        name: "{{ item }}"
         state: present
       become: yes
-      when: mysql_client_check.rc != 0 and ansible_os_family == "Debian"
-      ignore_errors: yes
-
-    - name: Install MySQL client (RedHat/CentOS)
-      yum:
-        name: mysql
-        state: present
-      become: yes
-      when: mysql_client_check.rc != 0 and ansible_os_family == "RedHat"
-      ignore_errors: yes
-
-    - name: Ensure MySQL User Has Permissions
-      command: >
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -e "
-        GRANT ALL PRIVILEGES ON *.* TO '{{ mysql_user }}'@'%' WITH GRANT OPTION;
-        FLUSH PRIVILEGES;"
+      with_items:
+        - python3-mysqldb
+        - python-mysqldb
+      register: mysql_python_installation
       ignore_errors: yes
 
     - name: Get Database Space Utilization
-      command: >
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -N -e "
-        SELECT table_schema, 
-        ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS SizeMB 
-        FROM information_schema.tables 
-        GROUP BY table_schema;"
+      community.mysql.mysql_query:
+        login_host: "{{ mysql_host }}"
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ mysql_password }}"
+        login_port: "{{ mysql_port }}"
+        query: >
+          SELECT table_schema as DatabaseName, 
+          ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS SizeMB 
+          FROM information_schema.tables 
+          GROUP BY table_schema;
       register: db_space
       ignore_errors: yes
 
     - name: Get Database Health
-      command: >
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -N -e "
-        SELECT schema_name, 'ONLINE', 
-        (SELECT COUNT(*) FROM information_schema.processlist WHERE command != 'Sleep'),
-        (SELECT COUNT(*) FROM information_schema.processlist),
-        (SELECT COUNT(*) FROM information_schema.processlist WHERE state = 'Waiting for table metadata lock'),
-        (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Threads_running')
-        FROM information_schema.schemata;"
+      community.mysql.mysql_query:
+        login_host: "{{ mysql_host }}"
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ mysql_password }}"
+        login_port: "{{ mysql_port }}"
+        query: >
+          SELECT 
+            schema_name as DatabaseName, 
+            'ONLINE' as Status, 
+            (SELECT COUNT(*) FROM information_schema.processlist WHERE command != 'Sleep') as ActiveRequests,
+            (SELECT COUNT(*) FROM information_schema.processlist) as ActiveUserConnections,
+            (SELECT COUNT(*) FROM information_schema.processlist WHERE state = 'Waiting for table metadata lock') as PendingRequests,
+            (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Threads_running') as CPUQueueLength
+          FROM information_schema.schemata;
       register: db_health
       ignore_errors: yes
 
     - name: Check for Deadlocks
-      command: >
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -N -e "
-        SELECT COUNT(*) AS Deadlocks 
-        FROM information_schema.innodb_trx t1 
-        INNER JOIN information_schema.innodb_trx t2 
-        WHERE t1.trx_id != t2.trx_id 
-        AND t1.trx_waiting_lock_id = t2.trx_lock_id 
-        AND t2.trx_waiting_lock_id = t1.trx_lock_id;"
+      community.mysql.mysql_query:
+        login_host: "{{ mysql_host }}"
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ mysql_password }}"
+        login_port: "{{ mysql_port }}"
+        query: >
+          SELECT COUNT(*) AS Deadlocks 
+          FROM information_schema.innodb_trx t1 
+          INNER JOIN information_schema.innodb_trx t2 
+          WHERE t1.trx_id != t2.trx_id 
+          AND t1.trx_waiting_lock_id = t2.trx_lock_id 
+          AND t2.trx_waiting_lock_id = t1.trx_lock_id;
       register: deadlocks
       ignore_errors: yes
 
     - name: Get MySQL Events Status
-      command: >
-        mysql -h{{ mysql_host }} -P{{ mysql_port }} -u{{ mysql_user }} --password={{ mysql_password }} -N -e "
-        SELECT event_name, status, last_executed,
-        CASE 
-          WHEN execute_at IS NOT NULL THEN 'SCHEDULED'
-          WHEN on_completion = 'PRESERVE' THEN 'RECURRING'
-          ELSE 'ONE-TIME'
-        END as event_type
-        FROM information_schema.events;"
+      community.mysql.mysql_query:
+        login_host: "{{ mysql_host }}"
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ mysql_password }}"
+        login_port: "{{ mysql_port }}"
+        query: >
+          SELECT 
+            event_name, 
+            status, 
+            last_executed,
+            CASE 
+              WHEN execute_at IS NOT NULL THEN 'SCHEDULED'
+              WHEN on_completion = 'PRESERVE' THEN 'RECURRING'
+              ELSE 'ONE-TIME'
+            END as event_type
+          FROM information_schema.events;
       register: event_activities
       ignore_errors: yes
-
-    - name: Process MySQL Output
-      set_fact:
-        db_space_fact: "{{ db_space.stdout_lines | default([]) | map('split', '\t') | list }}"
-        db_health_fact: "{{ db_health.stdout_lines | default([]) | map('split', '\t') | list }}"
-        deadlocks_fact: "{{ deadlocks.stdout | default('0') | trim }}"
-        event_activities_fact: "{{ event_activities.stdout_lines | default([]) | map('split', '\t') | list }}"
-      when: db_space.stdout is defined and db_space.stdout and db_health.stdout is defined and db_health.stdout and deadlocks.stdout is defined and deadlocks.stdout and event_activities.stdout is defined
 
     - name: Display Formatted Results
       debug:
         msg: |
-          {% if mysql_client_check.rc != 0 %}
-          ❓ MySQL Client Status: Not installed or not found in PATH
-          {% else %}
-          ✅ MySQL Client Status: Installed
+          {% if mysql_python_installation.failed is defined and mysql_python_installation.failed %}
+          ❓ MySQL Python Module Status: Installation failed. Please install python3-mysqldb or python-mysqldb manually.
           {% endif %}
           
           📊 Database Space Utilization:
-          {% if db_space_fact is defined and db_space_fact | length > 0 %}
-          {% for item in db_space_fact %}
-           - {{ item[0] }}: {{ item[1] }} MB
+          {% if db_space.query_result is defined and db_space.query_result.rowcount > 0 %}
+          {% for row in db_space.query_result.rows %}
+           - {{ row.DatabaseName }}: {{ row.SizeMB }} MB
           {% endfor %}
           {% else %}
            - No database space data available
           {% endif %}
           
           🚨 Deadlocks:
-          {% if deadlocks_fact is defined and deadlocks_fact | int > 0 %}
-           - {{ deadlocks_fact }} deadlocks detected!
+          {% if deadlocks.query_result is defined and deadlocks.query_result.rowcount > 0 %}
+          {% set deadlock_count = deadlocks.query_result.rows[0].Deadlocks %}
+          {% if deadlock_count | int > 0 %}
+           - {{ deadlock_count }} deadlocks detected!
           {% else %}
            - No deadlocks detected
           {% endif %}
+          {% else %}
+           - No deadlocks data available
+          {% endif %}
           
-          [ℹ️] Events query returned {{ event_activities_fact | default([]) | length }} rows.
+          [ℹ️] Events query returned {% if event_activities.query_result is defined %}{{ event_activities.query_result.rowcount }}{% else %}0{% endif %} rows.
           
           🛠 MySQL Events Status:
-          {% if event_activities_fact is defined and event_activities_fact | length > 0 %}
-          {% for event in event_activities_fact %}
-           - Event: {{ event[0] }}
-             Status: {{ event[1] }}
-             Last Executed: {{ event[2] }}
-             Type: {{ event[3] }}
+          {% if event_activities.query_result is defined and event_activities.query_result.rowcount > 0 %}
+          {% for row in event_activities.query_result.rows %}
+           - Event: {{ row.event_name }}
+             Status: {{ row.status }}
+             Last Executed: {{ row.last_executed }}
+             Type: {{ row.event_type }}
           {% endfor %}
           {% else %}
            - No events data available
           {% endif %}
           
           🩺 Database Health Check:
-          {% if db_health_fact is defined and db_health_fact | length > 0 %}
-          {% for item in db_health_fact %}
-           - Database: {{ item[0] }}
-             - Status: {{ item[1] }}
-             - Active Requests: {{ item[2] }}
-             - Active User Connections: {{ item[3] }}
-             - Pending Requests: {{ item[4] }}
-             - Running Threads: {{ item[5] }}
+          {% if db_health.query_result is defined and db_health.query_result.rowcount > 0 %}
+          {% for row in db_health.query_result.rows %}
+           - Database: {{ row.DatabaseName }}
+             - Status: {{ row.Status }}
+             - Active Requests: {{ row.ActiveRequests }}
+             - Active User Connections: {{ row.ActiveUserConnections }}
+             - Pending Requests: {{ row.PendingRequests }}
+             - Running Threads: {{ row.CPUQueueLength }}
           {% endfor %}
           {% else %}
            - No database health data available
